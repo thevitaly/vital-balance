@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { PlusCircle, Settings, Upload, Download, Calendar, TrendingUp, Smile, Meh, Frown, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { PlusCircle, Settings, Calendar, TrendingUp, Smile, Meh, Frown, ChevronDown, ChevronUp, X, Trash2 } from 'lucide-react';
+
+const API_URL = 'https://vital-balance-backend.onrender.com/api';
 
 const NutritionTracker = () => {
   const [records, setRecords] = useState([]);
@@ -18,6 +20,7 @@ const NutritionTracker = () => {
   const [notification, setNotification] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [tg, setTg] = useState(null);
+  const [telegramId, setTelegramId] = useState(null);
 
   const [newRecord, setNewRecord] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -29,7 +32,7 @@ const NutritionTracker = () => {
     carbs: ''
   });
 
- // Инициализация Telegram WebApp
+  // Инициализация Telegram WebApp
   useEffect(() => {
     const initTelegram = () => {
       try {
@@ -53,41 +56,41 @@ const NutritionTracker = () => {
             setShowAddForm(true);
             telegram.MainButton.hide();
           });
+
+          // Получаем Telegram ID пользователя
+          const userId = telegram.initDataUnsafe?.user?.id || 123456789; // Тестовый ID для разработки
+          setTelegramId(userId);
+          loadRecordsFromAPI(userId);
+        } else {
+          // Для тестирования вне Telegram
+          setTelegramId(123456789);
+          loadRecordsFromAPI(123456789);
         }
-        setIsLoading(false);
       } catch (error) {
         console.log('Telegram WebApp not available:', error);
-        setIsLoading(false);
+        setTelegramId(123456789);
+        loadRecordsFromAPI(123456789);
       }
     };
     
     initTelegram();
   }, []);
 
-  // Сохранение в Telegram Cloud Storage
-  const saveToCloudStorage = (key, value) => {
-    if (!window.Telegram?.WebApp?.CloudStorage) return;
-    
-    window.Telegram.WebApp.CloudStorage.setItem(key, JSON.stringify(value), (error, success) => {
-      if (error) {
-        console.error('Ошибка сохранения:', error);
-        showNotification('Ошибка сохранения данных', 'error');
+  // Загрузка записей из API
+  const loadRecordsFromAPI = async (userId) => {
+    try {
+      const response = await fetch(`${API_URL}/records/${userId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setRecords(data);
       }
-    });
+    } catch (error) {
+      console.error('Ошибка загрузки данных:', error);
+      showNotification('Ошибка загрузки данных', 'error');
+    } finally {
+      setIsLoading(false);
+    }
   };
-
-  // Автосохранение при изменении данных
-  useEffect(() => {
-    if (!isLoading) {
-      saveToCloudStorage('records', records);
-    }
-  }, [records]);
-
-  useEffect(() => {
-    if (!isLoading) {
-      saveToCloudStorage('profile', profile);
-    }
-  }, [profile]);
 
   // Управление главной кнопкой Telegram
   useEffect(() => {
@@ -218,78 +221,89 @@ const NutritionTracker = () => {
     setTimeout(() => setNotification(null), 4000);
   };
 
-  // API импорт через backend
-  const handleApiImport = async () => {
-    if (tg) {
-      tg.showPopup({
-        title: 'Импорт данных',
-        message: 'Отправьте файл Excel/CSV боту в личных сообщениях. Бот обработает данные и автоматически загрузит их в приложение.',
-        buttons: [
-          { id: 'open_bot', type: 'default', text: 'Открыть бота' },
-          { id: 'cancel', type: 'cancel' }
-        ]
-      }, (buttonId) => {
-        if (buttonId === 'open_bot') {
-          // Открываем чат с ботом
-          tg.openTelegramLink('https://t.me/YOUR_BOT_USERNAME');
-        }
-      });
-    } else {
-      showNotification('Функция доступна только в Telegram', 'warning');
-    }
-  };
-
-  const handleExport = () => {
-    const exportData = records.map(r => 
-      `${r.date}\t${r.ingredient}\t${r.weight}\t${r.calories}\t${r.protein}\t${r.fats}\t${r.carbs}`
-    ).join('\n');
-    
-    const header = 'Дата\tИнгредиент\tВес_г\tКалории\tБелки\tЖиры\tУглеводы\n';
-    const fullData = header + exportData;
-    
-    if (tg) {
-      tg.showPopup({
-        title: 'Экспорт данных',
-        message: 'Данные готовы к экспорту. Они будут отправлены вам в личные сообщения бота.',
-        buttons: [
-          { id: 'export', type: 'default', text: 'Отправить' },
-          { id: 'cancel', type: 'cancel' }
-        ]
-      }, (buttonId) => {
-        if (buttonId === 'export') {
-          // Отправка данных через bot API
-          showNotification('Данные отправлены в бот!', 'success');
-        }
-      });
-    } else {
-      // Fallback для браузера
-      const blob = new Blob([fullData], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'vital_balance_export.txt';
-      a.click();
-    }
-  };
-
-  const addRecord = () => {
+  const addRecord = async () => {
     if (!newRecord.ingredient || !newRecord.calories) {
       showNotification('Заполните ингредиент и калории', 'warning');
       return;
     }
     
-    setRecords(prev => [...prev, { ...newRecord }]);
-    setNewRecord({
-      date: new Date().toISOString().split('T')[0],
-      ingredient: '',
-      weight: '',
-      calories: '',
-      protein: '',
-      fats: '',
-      carbs: ''
-    });
-    setShowAddForm(false);
-    showNotification('Запись добавлена!', 'success');
+    try {
+      const response = await fetch(`${API_URL}/records`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          telegram_id: telegramId,
+          date: newRecord.date,
+          ingredient: newRecord.ingredient,
+          weight: parseFloat(newRecord.weight) || 0,
+          calories: parseFloat(newRecord.calories),
+          protein: parseFloat(newRecord.protein) || 0,
+          fats: parseFloat(newRecord.fats) || 0,
+          carbs: parseFloat(newRecord.carbs) || 0
+        })
+      });
+
+      if (response.ok) {
+        await loadRecordsFromAPI(telegramId);
+        setNewRecord({
+          date: new Date().toISOString().split('T')[0],
+          ingredient: '',
+          weight: '',
+          calories: '',
+          protein: '',
+          fats: '',
+          carbs: ''
+        });
+        setShowAddForm(false);
+        showNotification('Запись добавлена!', 'success');
+      } else {
+        showNotification('Ошибка при добавлении записи', 'error');
+      }
+    } catch (error) {
+      console.error('Ошибка:', error);
+      showNotification('Ошибка при добавлении записи', 'error');
+    }
+  };
+
+  const deleteRecord = async (id) => {
+    if (tg) {
+      tg.showPopup({
+        title: 'Удалить запись?',
+        message: 'Это действие нельзя отменить',
+        buttons: [
+          { id: 'delete', type: 'destructive', text: 'Удалить' },
+          { id: 'cancel', type: 'cancel' }
+        ]
+      }, async (buttonId) => {
+        if (buttonId === 'delete') {
+          await performDelete(id);
+        }
+      });
+    } else {
+      if (window.confirm('Удалить запись?')) {
+        await performDelete(id);
+      }
+    }
+  };
+
+  const performDelete = async (id) => {
+    try {
+      const response = await fetch(`${API_URL}/records/${id}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        await loadRecordsFromAPI(telegramId);
+        showNotification('Запись удалена', 'success');
+      } else {
+        showNotification('Ошибка при удалении', 'error');
+      }
+    } catch (error) {
+      console.error('Ошибка:', error);
+      showNotification('Ошибка при удалении', 'error');
+    }
   };
 
   const recordsByDay = getRecordsByDay();
@@ -389,21 +403,7 @@ const NutritionTracker = () => {
                 className="flex items-center justify-center gap-2 bg-gradient-to-r from-gray-700 to-gray-600 text-white px-3 sm:px-4 py-2 rounded-xl hover:from-gray-600 hover:to-gray-500 transition font-medium shadow-lg text-sm flex-1 sm:flex-none"
               >
                 <Settings size={18} />
-                <span className="hidden sm:inline">Настройки</span>
-              </button>
-              <button
-                onClick={handleApiImport}
-                className="flex items-center justify-center gap-2 bg-gradient-to-r from-orange-600 to-amber-600 text-white px-3 sm:px-4 py-2 rounded-xl hover:from-orange-500 hover:to-amber-500 transition font-medium shadow-lg text-sm flex-1 sm:flex-none"
-              >
-                <Upload size={18} />
-                <span>Импорт</span>
-              </button>
-              <button
-                onClick={handleExport}
-                className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-cyan-600 text-white px-3 sm:px-4 py-2 rounded-xl hover:from-blue-500 hover:to-cyan-500 transition font-medium shadow-lg text-sm flex-1 sm:flex-none"
-              >
-                <Download size={18} />
-                <span className="hidden sm:inline">Экспорт</span>
+                <span>Настройки</span>
               </button>
             </div>
           </div>
@@ -683,6 +683,7 @@ const NutritionTracker = () => {
                             <th className="pb-3">Б</th>
                             <th className="pb-3">Ж</th>
                             <th className="pb-3">У</th>
+                            <th className="pb-3"></th>
                           </tr>
                         </thead>
                         <tbody>
@@ -694,6 +695,17 @@ const NutritionTracker = () => {
                               <td className="py-2 sm:py-3 text-orange-300 text-center">{Math.round(record.protein)}</td>
                               <td className="py-2 sm:py-3 text-yellow-400 text-center">{Math.round(record.fats)}</td>
                               <td className="py-2 sm:py-3 text-blue-400 text-center">{Math.round(record.carbs)}</td>
+                              <td className="py-2 sm:py-3 text-center">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteRecord(record.id);
+                                  }}
+                                  className="text-red-400 hover:text-red-300 transition"
+                                >
+                                  <Trash2 size={18} />
+                                </button>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -710,7 +722,7 @@ const NutritionTracker = () => {
           <div className="bg-gradient-to-r from-gray-800 to-gray-900 rounded-xl sm:rounded-2xl shadow-2xl p-8 sm:p-12 text-center border border-gray-700">
             <TrendingUp size={48} className="mx-auto text-orange-500 mb-4 opacity-50" />
             <h3 className="text-xl sm:text-2xl font-bold text-white mb-2">Начните отслеживать питание</h3>
-            <p className="text-sm sm:text-base text-gray-400 font-light">Добавьте первую запись или импортируйте данные через бота</p>
+            <p className="text-sm sm:text-base text-gray-400 font-light">Добавьте первую запись!</p>
           </div>
         )}
       </div>
